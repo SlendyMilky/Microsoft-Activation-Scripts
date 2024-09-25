@@ -1,5 +1,3 @@
-<p align="center"><img src="https://nc.slyc.ch/apps/theming/image/logo" alt="Slyc Logo" style="max-width: 150px; max-height: 150px;"></p>
-
 <h1 align="center">Microsoft  Activation  Scripts (MAS)</h1>
 
 <p align="center">A Windows and Office activator using HWID / Ohook / KMS38 / Online KMS activation methods, with a focus on open-source code and fewer antivirus detections.</p>
