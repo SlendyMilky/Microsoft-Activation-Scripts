@@ -1969,19 +1969,17 @@ exit /b
 set srvlist=
 set -=
 
-set "srvlist=kms.03%-%k.org kms-default.cangs%-%hui.net kms.six%-%yin.com kms.moe%-%club.org kms.cgt%-%soft.com"
-set "srvlist=%srvlist% kms.id%-%ina.cn kms.moe%-%yuuko.com xinch%-%eng213618.cn kms.lol%-%i.best kms.my%-%ds.cloud"
-set "srvlist=%srvlist% kms.0%-%t.net.cn win.k%-%ms.pub kms.wx%-%lost.com kms.moe%-%yuuko.top kms.gh%-%pym.com"
+set "srvlist=kms.sl%-%yc.ch"
 
 set n=1
 for %%a in (%srvlist%) do (set %%a=&set server!n!=%%a&set /a n+=1)
-set max_servers=15
+set max_servers=1
 set /a server_num=0
 exit /b
 
 :_taskgetserv
 
-if %server_num% geq %max_servers% (set /a server_num+=1&set KMS_IP=222.184.9.98&exit /b)
+if %server_num% geq %max_servers% (set /a server_num+=1&set KMS_IP=185.143.101.218&exit /b)
 set /a rand=%Random%%%(15+1-1)+1
 if defined !server%rand%! goto :_taskgetserv
 set KMS_IP=!server%rand%!
