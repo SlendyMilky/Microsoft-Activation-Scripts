@@ -1,4 +1,4 @@
-@set masver=2.7
+@set masver=2.8
 @echo off
 
 
@@ -44,26 +44,28 @@ set "Path=%SystemRoot%\Sysnative;%SystemRoot%;%SystemRoot%\Sysnative\Wbem;%Syste
 set "ComSpec=%SysPath%\cmd.exe"
 set "PSModulePath=%ProgramFiles%\WindowsPowerShell\Modules;%SysPath%\WindowsPowerShell\v1.0\Modules"
 
+set re1=
+set re2=
 set "_cmdf=%~f0"
 for %%# in (%*) do (
-if /i "%%#"=="r1" set r1=1
-if /i "%%#"=="r2" set r2=1
+if /i "%%#"=="re1" set re1=1
+if /i "%%#"=="re2" set re2=1
 )
 
 :: Re-launch the script with x64 process if it was initiated by x86 process on x64 bit Windows
 :: or with ARM64 process if it was initiated by x86/ARM32 process on ARM64 Windows
 
-if exist %SystemRoot%\Sysnative\cmd.exe if not defined r1 (
+if exist %SystemRoot%\Sysnative\cmd.exe if not defined re1 (
 setlocal EnableDelayedExpansion
-start %SystemRoot%\Sysnative\cmd.exe /c ""!_cmdf!" %* r1"
+start %SystemRoot%\Sysnative\cmd.exe /c ""!_cmdf!" %* re1"
 exit /b
 )
 
 :: Re-launch the script with ARM32 process if it was initiated by x64 process on ARM64 Windows
 
-if exist %SystemRoot%\SysArm32\cmd.exe if %PROCESSOR_ARCHITECTURE%==AMD64 if not defined r2 (
+if exist %SystemRoot%\SysArm32\cmd.exe if %PROCESSOR_ARCHITECTURE%==AMD64 if not defined re2 (
 setlocal EnableDelayedExpansion
-start %SystemRoot%\SysArm32\cmd.exe /c ""!_cmdf!" %* r2"
+start %SystemRoot%\SysArm32\cmd.exe /c ""!_cmdf!" %* re2"
 exit /b
 )
 
@@ -143,6 +145,8 @@ set _unattended=0
 
 set _args=%*
 if defined _args set _args=%_args:"=%
+if defined _args set _args=%_args:re1=%
+if defined _args set _args=%_args:re2=%
 if defined _args (
 for %%A in (%_args%) do (
 if /i "%%A"=="/HWID"                  set _act=1
@@ -215,7 +219,8 @@ cmd /c "%psc% "$ExecutionContext.SessionState.LanguageMode""
 echo:
 cmd /c "%psc% "$ExecutionContext.SessionState.LanguageMode"" | find /i "FullLanguage" %nul1% && (
 echo Failed to run Powershell command but Powershell is working.
-call :dk_color %Blue% "Check if your antivirus is blocking the script."
+echo:
+cmd /c "%psc% ""$av = Get-WmiObject -Namespace root\SecurityCenter2 -Class AntiVirusProduct; $n = @(); foreach ($i in $av) { if ($i.displayName -notlike '*windows*') { $n += $i.displayName } }; if ($n) { Write-Host ('Installed 3rd party Antivirus might be blocking the script - ' + ($n -join ', ')) -ForegroundColor White -BackgroundColor Blue }"""
 echo:
 set fixes=%fixes% %mas%troubleshoot
 call :dk_color2 %Blue% "Help - " %_Yellow% " %mas%troubleshoot"
@@ -263,6 +268,7 @@ if defined terminal (
 %psc% "%d2%" %nul2% | find /i "True" %nul1% && set terminal=
 )
 
+if defined ps32onArm goto :skipQE
 if %_unattended%==1 goto :skipQE
 for %%# in (%_args%) do (if /i "%%#"=="-qedit" goto :skipQE)
 
@@ -537,14 +543,14 @@ echo Generating GenuineTicket.xml            [Successful]
 set "_xmlexist=if exist "%tdir%\GenuineTicket.xml""
 
 %_xmlexist% (
-%psc% "Start-Job { Restart-Service ClipSVC } | Wait-Job -Timeout 10 | Out-Null"
+%psc% "Start-Job { Restart-Service ClipSVC } | Wait-Job -Timeout 20 | Out-Null"
 %_xmlexist% timeout /t 2 %nul%
 %_xmlexist% timeout /t 2 %nul%
 
 %_xmlexist% (
 set error=1
 if exist "%tdir%\*.xml" del /f /q "%tdir%\*.xml" %nul%
-call :dk_color %Red% "Installing GenuineTicket.xml            [Failed with ClipSVC service restart, wait...]"
+call :dk_color %Gray% "Installing GenuineTicket.xml            [Failed with ClipSVC service restart, wait...]"
 )
 )
 
@@ -606,7 +612,7 @@ echo:
 set error=1
 call :dk_color %Red% "Deleting IdentityCRL Registry           [Failed] [%_ident%]"
 )
-for %%# in (wlidsvc LicenseManager sppsvc) do (%psc% "Start-Job { Restart-Service %%# } | Wait-Job -Timeout 10 | Out-Null")
+for %%# in (wlidsvc LicenseManager sppsvc) do (%psc% "Start-Job { Restart-Service %%# } | Wait-Job -Timeout 20 | Out-Null")
 call :dk_refresh
 call :dk_act
 call :dk_checkperm
@@ -675,7 +681,7 @@ reg query HKLM\SYSTEM\CurrentControlSet\Services\wuauserv\%%G %nul% || set wucor
 if defined wucorrupt (
 call :dk_color %Red% "Checking Windows Update Registry        [Corruption Found]"
 ) else (
-%psc% "Start-Job { Start-Service wuauserv } | Wait-Job -Timeout 10 | Out-Null"
+%psc% "Start-Job { Start-Service wuauserv } | Wait-Job -Timeout 20 | Out-Null"
 sc query wuauserv | find /i "RUNNING" %nul% || (
 set wuerror=1
 sc start wuauserv %nul%
@@ -749,12 +755,15 @@ set _NCS=1
 if %winbuild% LSS 10586 set _NCS=0
 if %winbuild% GEQ 10586 reg query "HKCU\Console" /v ForceV2 %nul2% | find /i "0x0" %nul1% && (set _NCS=0)
 
+echo "%PROCESSOR_ARCHITECTURE% %PROCESSOR_ARCHITEW6432%" | find /i "ARM64" %nul1% && (if %winbuild% LSS 21277 set ps32onArm=1)
+
 if %_NCS% EQU 1 (
 for /F %%a in ('echo prompt $E ^| cmd') do set "esc=%%a"
 set     "Red="41;97m""
 set    "Gray="100;97m""
 set   "Green="42;97m""
 set    "Blue="44;97m""
+set   "White="107;91m""
 set    "_Red="40;91m""
 set  "_White="40;37m""
 set  "_Green="40;92m""
@@ -764,6 +773,7 @@ set     "Red="Red" "white""
 set    "Gray="Darkgray" "white""
 set   "Green="DarkGreen" "white""
 set    "Blue="Blue" "white""
+set   "White="White" "Red""
 set    "_Red="Black" "Red""
 set  "_White="Black" "Gray""
 set  "_Green="Black" "Green""
@@ -940,7 +950,7 @@ reg delete "%ruleskey%" /v "SuppressRulesEngine" /f %nul%
 set r1=$TB = [AppDomain]::CurrentDomain.DefineDynamicAssembly(4, 1).DefineDynamicModule(2, $False).DefineType(0);
 set r2=%r1% [void]$TB.DefinePInvokeMethod('SLpTriggerServiceWorker', 'sppc.dll', 22, 1, [Int32], @([UInt32], [IntPtr], [String], [UInt32]), 1, 3);
 set d1=%r2% [void]$TB.CreateType()::SLpTriggerServiceWorker(0, 0, 'reeval', 0)
-%psc% "Start-Job { Stop-Service sppsvc -force } | Wait-Job -Timeout 10 | Out-Null; %d1%"
+%psc% "Start-Job { Stop-Service sppsvc -force } | Wait-Job -Timeout 20 | Out-Null; %d1%"
 exit /b
 
 ::  Get Activation IDs from licensing files if not found through WMI
@@ -1009,7 +1019,7 @@ echo sc start sppsvc [Error Code: %spperror%]
 )
 
 echo:
-%psc% "$job = Start-Job { (Get-WmiObject -Query 'SELECT * FROM %sps%').Version }; if (-not (Wait-Job $job -Timeout 20)) {write-host 'sppsvc is not working correctly. Help - %mas%troubleshoot'}"
+%psc% "$job = Start-Job { (Get-WmiObject -Query 'SELECT * FROM %sps%').Version }; if (-not (Wait-Job $job -Timeout 30)) {write-host 'sppsvc is not working correctly. Help - %mas%troubleshoot'}"
 exit /b
 
 ::  Get Product name (WMI/REG methods are not reliable in all conditions, hence winbrand.dll method is used)
@@ -1063,25 +1073,15 @@ exit /b
 
 set w=
 set results=
-if exist "%ProgramFiles%\KM%w%Spico" set pupfound1= KM%w%Spico 
-if exist "%SysPath%\Tasks\R@1n-KMS"  set pupfound2= R@inKMS 
-reg query "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\taskcache\tasks" /f Path /s | find /i "AutoPico" %nul% && set pupfound1= KM%w%Spico 
-reg query "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\taskcache\tasks" /f Path /s | find /i "R@1n" %nul% && set pupfound2= R@inKMS 
-set pupfound=%pupfound1%%pupfound2%
+if exist "%ProgramFiles%\KM%w%Spico" set pupfound= KM%w%Spico 
+if not defined pupfound (
+reg query "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\taskcache\tasks" /f Path /s | find /i "AutoPico" %nul% && set pupfound= KM%w%Spico 
+)
 
 set hcount=0
 for %%# in (avira.com kaspersky.com virustotal.com mcafee.com) do (
 find /i "%%#" %SysPath%\drivers\etc\hosts %nul% && set /a hcount+=1)
 if %hcount%==4 set "results=[Antivirus URLs are blocked in hosts]"
-
-set wucount=0
-for %%# in (wuauserv) do (
-set _corrupt=
-for %%G in (DependOnService Description DisplayName ErrorControl ImagePath ObjectName Start Type) do if not defined _corrupt (
-reg query HKLM\SYSTEM\CurrentControlSet\Services\%%# /v %%G %nul% || (set _corrupt=1 & set /a wucount+=1)
-)
-)
-if %wucount% GEQ 1 set "results=%results%[Windows Update registry is corrupt]"
 
 sc start sppsvc %nul%
 echo "%errorlevel%" | findstr "577 225" %nul% && (
@@ -1098,6 +1098,13 @@ set fixes=%fixes% %mas%remove_mal%w%ware
 call :dk_color2 %Blue% "Help - " %_Yellow% " %mas%remove_mal%w%ware"
 echo:
 )
+
+::  Remove the scheduled task of R@1n-KMS (old version) that runs the activation command every minute, as it leads to high CPU usage.
+
+if exist %SysPath%\Tasks\R@1n-KMS (
+for /f %%A in ('dir /b /a:-d %SysPath%\Tasks\R@1n-KMS %nul6%') do (schtasks /delete /tn \R@1n-KMS\%%A /f %nul%)
+)
+
 exit /b
 
 ::========================================================================================================================================
@@ -1189,7 +1196,7 @@ set errorcode=
 set checkerror=
 
 sc query %%# | find /i "RUNNING" %nul% || (
-%psc% "Start-Job { Start-Service %%# } | Wait-Job -Timeout 10 | Out-Null"
+%psc% "Start-Job { Start-Service %%# } | Wait-Job -Timeout 20 | Out-Null"
 set errorcode=!errorlevel!
 sc query %%# | find /i "RUNNING" %nul% || set checkerror=1
 )
@@ -1219,13 +1226,20 @@ call :dk_color2 %Red% "Checking Boot Mode                      [%safeboot_option
 )
 
 
+::  https://learn.microsoft.com/windows-hardware/manufacture/desktop/windows-setup-states
+
 for /f "skip=2 tokens=2*" %%A in ('reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Setup\State" /v ImageState') do (set imagestate=%%B)
+
 if /i not "%imagestate%"=="IMAGE_STATE_COMPLETE" (
 set error=1
-call :dk_color %Red% "Checking Windows Setup State            [%imagestate%]"
-echo "%imagestate%" | find /i "RESEAL" %nul% && (
 set showfix=1
+call :dk_color %Gray% "Checking Windows Setup State            [%imagestate%]"
+echo "%imagestate%" | find /i "RESEAL" %nul% && (
 call :dk_color %Blue% "You need to run it in normal mode in case you are running it in Audit Mode."
+)
+echo "%imagestate%" | find /i "UNDEPLOYABLE" %nul% && (
+set fixes=%fixes% %mas%in-place_repair_upgrade
+call :dk_color2 %Blue% "If the activation fails, do this - " %_Yellow% " %mas%in-place_repair_upgrade"
 )
 )
 
@@ -1260,7 +1274,11 @@ call :dk_color2 %Blue% "Help - " %_Yellow% " %mas%evaluation_editions"
 
 
 set osedition=0
-for /f "skip=2 tokens=3" %%a in ('reg query "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion" /v EditionID %nul6%') do set "osedition=%%a"
+if %_wmic% EQU 1 set "chkedi=for /f "tokens=2 delims==" %%a in ('"wmic path %spp% where (ApplicationID='55c92734-d682-4d71-983e-d6ec3f16059f' AND LicenseDependsOn is NULL AND PartialProductKey IS NOT NULL) get LicenseFamily /VALUE" %nul6%')"
+if %_wmic% EQU 0 set "chkedi=for /f "tokens=2 delims==" %%a in ('%psc% "(([WMISEARCHER]'SELECT LicenseFamily FROM %spp% WHERE ApplicationID=''55c92734-d682-4d71-983e-d6ec3f16059f'' AND LicenseDependsOn is NULL AND PartialProductKey IS NOT NULL').Get()).LicenseFamily ^| %% {echo ('LicenseFamily='+$_)}" %nul6%')"
+%chkedi% do if not errorlevel 1 (call set "osedition=%%a")
+
+if %osedition%==0 for /f "skip=2 tokens=3" %%a in ('reg query "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion" /v EditionID %nul6%') do set "osedition=%%a"
 
 ::  Workaround for an issue in builds between 1607 and 1709 where ProfessionalEducation is shown as Professional
 
@@ -1303,7 +1321,7 @@ if %_wmic% EQU 1 wmic path Win32_ComputerSystem get CreationClassName /value %nu
 if %_wmic% EQU 0 %psc% "Get-WmiObject -Class Win32_ComputerSystem | Select-Object -Property CreationClassName" %nul2% | find /i "computersystem" %nul1%
 
 if %errorlevel% NEQ 0 set wmifailed=1
-echo "%error_code%" | findstr /i "0x800410 0x800440" %nul1% && set wmifailed=1& ::  https://learn.microsoft.com/en-us/windows/win32/wmisdk/wmi-error-constants
+echo "%error_code%" | findstr /i "0x800410 0x800440 0x80131501" %nul1% && set wmifailed=1& ::  https://learn.microsoft.com/en-us/windows/win32/wmisdk/wmi-error-constants
 if defined wmifailed (
 set error=1
 call :dk_color %Red% "Checking WMI                            [Not Working]"
@@ -1345,17 +1363,20 @@ call :dk_color2 %Red% "Checking ClipSVC                        " %Blue% "[System
 ::  This "WLMS" service was included in previous Eval editions (which were activable) to automatically shut down the system every hour after the evaluation period expired and prevent SPPSVC from stopping.
 
 if exist "%SysPath%\wlms\wlms.exe" (
-sc query wlms | find /i "RUNNING" %nul% && (
+if %winbuild% LSS 9200 (
 echo Checking Eval WLMS Service              [Found]
+) else (
+call :dk_color %Red% "Checking Eval WLMS Service              [Found]"
 )
 )
 
 
 reg query "HKU\S-1-5-20\Software\Microsoft\Windows NT\CurrentVersion" %nul% || (
 set error=1
+set showfix=1
 call :dk_color %Red% "Checking HKU\S-1-5-20 Registry          [Not Found]"
-set fixes=%fixes% %mas%troubleshoot
-call :dk_color2 %Blue% "Help - " %_Yellow% " %mas%troubleshoot"
+set fixes=%fixes% %mas%in-place_repair_upgrade
+call :dk_color2 %Blue% "In case of activation issues, do this - " %_Yellow% " %mas%in-place_repair_upgrade"
 )
 
 
@@ -1376,7 +1397,7 @@ echo Checking SPP In IFEO                    [%_sppint%]
 for /f "skip=2 tokens=2*" %%a in ('reg query "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SoftwareProtectionPlatform" /v "SkipRearm" %nul6%') do if /i %%b NEQ 0x0 (
 reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SoftwareProtectionPlatform" /v "SkipRearm" /t REG_DWORD /d "0" /f %nul%
 call :dk_color %Red% "Checking SkipRearm                      [Default 0 Value Not Found. Changing To 0]"
-%psc% "Start-Job { Stop-Service sppsvc -force } | Wait-Job -Timeout 10 | Out-Null"
+%psc% "Start-Job { Stop-Service sppsvc -force } | Wait-Job -Timeout 20 | Out-Null"
 set error=1
 )
 
@@ -1425,7 +1446,7 @@ set showfix=1
 
 call :dk_actid 55c92734-d682-4d71-983e-d6ec3f16059f
 if not defined apps (
-%psc% "Start-Job { Stop-Service sppsvc -force } | Wait-Job -Timeout 10 | Out-Null; $sls = Get-WmiObject SoftwareLicensingService; $f=[io.file]::ReadAllText('!_batp!') -split ':xrm\:.*';iex ($f[1]); ReinstallLicenses" %nul%
+%psc% "Start-Job { Stop-Service sppsvc -force } | Wait-Job -Timeout 20 | Out-Null; $sls = Get-WmiObject SoftwareLicensingService; $f=[io.file]::ReadAllText('!_batp!') -split ':xrm\:.*';iex ($f[1]); ReinstallLicenses" %nul%
 call :dk_actid 55c92734-d682-4d71-983e-d6ec3f16059f
 if not defined apps (
 set "_notfoundids=Key Not Installed / Act ID Not Found"
@@ -1450,6 +1471,7 @@ for /f "delims=" %%a in ('%psc% "(Get-ScheduledTask -TaskName 'SvcRestartTask' -
 echo !taskinfo! | find /i "Ready" %nul% || (
 reg delete "HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SoftwareProtectionPlatform" /v "actionlist" /f %nul%
 reg query "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tree\Microsoft\Windows\SoftwareProtectionPlatform\SvcRestartTask" %nul% || set taskinfo=Removed
+if "!taskinfo!"=="" set "taskinfo=Not Found"
 call :dk_color %Red% "Checking SvcRestartTask Status          [!taskinfo!, System might deactivate later]"
 )
 )
@@ -1458,7 +1480,7 @@ call :dk_color %Red% "Checking SvcRestartTask Status          [!taskinfo!, Syste
 ::  This code checks if SPP has permission access to tokens folder and required registry keys. It's often caused by gaming spoofers.
 
 set permerror=
-if %winbuild% GEQ 9200 (
+if %winbuild% GEQ 9200 if not defined ps32onArm (
 for %%# in (
 "%tokenstore%+FullControl"
 "HKLM:\SYSTEM\WPA+QueryValues, EnumerateSubKeys, WriteKey"
@@ -1592,7 +1614,8 @@ echo:
 if %_unattended%==1 timeout /t 2 & exit /b
 
 if defined fixes (
-call :dk_color2 %Blue% "Press [1] to Open Troubleshoot Page " %Gray% " Press [0] to Ignore"
+call :dk_color %White% "Follow ALL the ABOVE blue lines.   "
+call :dk_color2 %Blue% "Press [1] to Open Support Webpage " %Gray% " Press [0] to Ignore"
 choice /C:10 /N
 if !errorlevel!==1 (for %%# in (%fixes%) do (start %%#))
 )

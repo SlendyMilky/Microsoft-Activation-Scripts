@@ -1,4 +1,4 @@
-@set masver=2.7
+@set masver=2.8
 @echo off
 
 
@@ -31,26 +31,28 @@ set "Path=%SystemRoot%\Sysnative;%SystemRoot%;%SystemRoot%\Sysnative\Wbem;%Syste
 set "ComSpec=%SysPath%\cmd.exe"
 set "PSModulePath=%ProgramFiles%\WindowsPowerShell\Modules;%SysPath%\WindowsPowerShell\v1.0\Modules"
 
+set re1=
+set re2=
 set "_cmdf=%~f0"
 for %%# in (%*) do (
-if /i "%%#"=="r1" set r1=1
-if /i "%%#"=="r2" set r2=1
+if /i "%%#"=="re1" set re1=1
+if /i "%%#"=="re2" set re2=1
 )
 
 :: Re-launch the script with x64 process if it was initiated by x86 process on x64 bit Windows
 :: or with ARM64 process if it was initiated by x86/ARM32 process on ARM64 Windows
 
-if exist %SystemRoot%\Sysnative\cmd.exe if not defined r1 (
+if exist %SystemRoot%\Sysnative\cmd.exe if not defined re1 (
 setlocal EnableDelayedExpansion
-start %SystemRoot%\Sysnative\cmd.exe /c ""!_cmdf!" %* r1"
+start %SystemRoot%\Sysnative\cmd.exe /c ""!_cmdf!" %* re1"
 exit /b
 )
 
 :: Re-launch the script with ARM32 process if it was initiated by x64 process on ARM64 Windows
 
-if exist %SystemRoot%\SysArm32\cmd.exe if %PROCESSOR_ARCHITECTURE%==AMD64 if not defined r2 (
+if exist %SystemRoot%\SysArm32\cmd.exe if %PROCESSOR_ARCHITECTURE%==AMD64 if not defined re2 (
 setlocal EnableDelayedExpansion
-start %SystemRoot%\SysArm32\cmd.exe /c ""!_cmdf!" %* r2"
+start %SystemRoot%\SysArm32\cmd.exe /c ""!_cmdf!" %* re2"
 exit /b
 )
 
@@ -103,6 +105,8 @@ set _unattended=0
 
 set _args=%*
 if defined _args set _args=%_args:"=%
+if defined _args set _args=%_args:re1=%
+if defined _args set _args=%_args:re2=%
 if defined _args (
 for %%A in (%_args%) do (
 if /i "%%A"=="-el"                    set _elev=1
@@ -168,7 +172,8 @@ cmd /c "%psc% "$ExecutionContext.SessionState.LanguageMode""
 echo:
 cmd /c "%psc% "$ExecutionContext.SessionState.LanguageMode"" | find /i "FullLanguage" %nul1% && (
 echo Failed to run Powershell command but Powershell is working.
-call :dk_color %Blue% "Check if your antivirus is blocking the script."
+echo:
+cmd /c "%psc% ""$av = Get-WmiObject -Namespace root\SecurityCenter2 -Class AntiVirusProduct; $n = @(); foreach ($i in $av) { if ($i.displayName -notlike '*windows*') { $n += $i.displayName } }; if ($n) { Write-Host ('Installed 3rd party Antivirus might be blocking the script - ' + ($n -join ', ')) -ForegroundColor White -BackgroundColor Blue }"""
 echo:
 set fixes=%fixes% %mas%troubleshoot
 call :dk_color2 %Blue% "Help - " %_Yellow% " %mas%troubleshoot"
@@ -216,6 +221,7 @@ if defined terminal (
 %psc% "%d2%" %nul2% | find /i "True" %nul1% && set terminal=
 )
 
+if defined ps32onArm goto :skipQE
 if %_unattended%==1 goto :skipQE
 for %%# in (%_args%) do (if /i "%%#"=="-qedit" goto :skipQE)
 
@@ -421,20 +427,23 @@ echo:
 echo:
 echo         ____________________________________________________________
 echo:
-echo                 [1] Change - Office Edition
-echo                 [2] Add    - Office Edition
-echo                 [3] Remove - Office Edition
+echo                 [1] Change all editions
+echo                 [2] Add edition
+echo                 [3] Remove edition
+echo:
+echo                 [4] Add/Remove apps
 echo                 ____________________________________________
 echo:
-echo                 [4] Change Office Update Channel
+echo                 [5] Change Office Update Channel
 echo                 [0] %_exitmsg%
 echo         ____________________________________________________________
 echo: 
-call :dk_color2 %_White% "            " %_Green% "Choose a menu option using your keyboard [1,2,3,4,0]"
-choice /C:12340 /N
+call :dk_color2 %_White% "           " %_Green% "Choose a menu option using your keyboard [1,2,3,4,5,0]"
+choice /C:123450 /N
 set _el=!errorlevel!
-if !_el!==5  exit /b
-if !_el!==4  goto :oe_changeupdchnl
+if !_el!==6  exit /b
+if !_el!==5  goto :oe_changeupdchnl
+if !_el!==4  goto :oe_editedition
 if !_el!==3  goto :oe_removeedition
 if !_el!==2  set change=0& goto :oe_edition
 if !_el!==1  set change=1& goto :oe_edition
@@ -452,7 +461,12 @@ goto :oe_goback
 
 cls
 if not defined terminal mode 76, 25
-title  Change Office Edition %masver%
+if %change%==1 (
+title  Change all editions %masver%
+) else (
+title  Add edition %masver%
+)
+
 echo:
 echo:
 echo:
@@ -508,13 +522,23 @@ goto :oe_goback
 set inpt=
 set counter=0
 set verified=0
+set _notfound=
 set targetedition=
 
 %line%
 echo:
 call :dk_color %Gray% "Installed Office editions: %_oIds%"
 call :dk_color %Gray% "You can select one of the following Office Editions."
-if %winbuild% LSS 10240 echo Unsupported products such as 2019/2021/2024 are excluded from this list.
+if %winbuild% LSS 10240 (
+echo Unsupported products such as 2019/2021/2024 are excluded from this list.
+) else (
+for %%# in (2019 2021 2024) do (
+find /i "%%#" "%SystemRoot%\Temp\%list%.txt" %nul1% || (
+if defined _notfound (set _notfound=%%#, !_notfound!) else (set _notfound=%%#)
+)
+)
+if defined _notfound call :dk_color %Gray% "Office !_notfound! is not in this list because old version [%_version%] of Office is installed."
+)
 %line%
 echo:
 
@@ -543,6 +567,8 @@ if %verified%==0 goto :oe_editionchange
 ::========================================================================================================================================
 
 ::  Set app exclusions
+
+:oe_excludeappspre
 
 cls
 set suites=
@@ -615,7 +641,7 @@ echo:
 call :dk_color %_Green% "Choose a menu option using your keyboard:"
 choice /C:AENOPJRVWLDT10 /N
 set _el=!errorlevel!
-if !_el!==14 goto :oe_editionchangepre
+if !_el!==14 goto :oemenu
 if !_el!==13 call :excludelist & goto :oe_editionchangefinal
 if !_el!==12 if defined Teams_st      (if "%Teams_st%"=="Off"      (set Teams_st=ON)      else (set Teams_st=Off))
 if !_el!==11 if defined OneDrive_st   (if "%OneDrive_st%"=="Off"   (set OneDrive_st=ON)   else (set OneDrive_st=Off))
@@ -635,18 +661,18 @@ goto :oe_excludeapps
 
 set excludelist=
 for %%# in (
-Access
-Excel
-OneNote
-Outlook
-PowerPoint
-Project
-Publisher
-Visio
-Word
-Lync
-OneDrive
-Teams
+access
+excel
+onenote
+outlook
+powerpoint
+project
+publisher
+visio
+word
+lync
+onedrive
+teams
 ) do (
 if /i "!%%#_st!"=="Off" if defined excludelist (set excludelist=!excludelist!,%%#) else (set excludelist=,%%#)
 )
@@ -717,7 +743,7 @@ goto :oe_goback
 ::  OfficeClickToRun.exe with productstoadd method is used here to add editions
 ::  It uses delta updates, meaning that since it's using same installed build, it will consume very less Internet
 
-set "c2rcommand="%_c2rExe%" platform=%_oArch% culture=%_lang% productstoadd=%targetedition%.16_%_lang%_x-none cdnbaseurl.16=http://officecdn.microsoft.com/pr/%_updch% baseurl.16=http://officecdn.microsoft.com/pr/%_updch% version.16=%_version% mediatype.16=CDN sourcetype.16=CDN deliverymechanism=%_updch% %targetedition%.excludedapps.16=Groove%excludelist% flt.useteamsaddon=disabled flt.usebingaddononinstall=disabled flt.usebingaddononupdate=disabled"
+set "c2rcommand="%_c2rExe%" platform=%_oArch% culture=%_lang% productstoadd=%targetedition%.16_%_lang%_x-none cdnbaseurl.16=http://officecdn.microsoft.com/pr/%_updch% baseurl.16=http://officecdn.microsoft.com/pr/%_updch% version.16=%_version% mediatype.16=CDN sourcetype.16=CDN deliverymechanism=%_updch% %targetedition%.excludedapps.16=groove%excludelist% flt.useteamsaddon=disabled flt.usebingaddononinstall=disabled flt.usebingaddononupdate=disabled"
 
 if %change%==1 (
 set "c2rcommand=!c2rcommand! productstoremove=AllProducts"
@@ -744,9 +770,70 @@ goto :oe_goback
 
 ::========================================================================================================================================
 
+::  Edit Office edition
+
+:oe_editedition
+
+cls
+title  Add/Remove Apps %masver%
+
+call :oe_chkinternet
+if not defined _int (
+goto :oe_goback
+)
+
+set change=0
+call :ch_getinfo
+cls
+
+if not defined terminal (
+mode 98, 35
+)
+
+set inpt=
+set counter=0
+set verified=0
+set targetedition=
+
+%line%
+echo:
+call :dk_color %Gray% "You can edit [add/remove apps] one of the following Office editions."
+%line%
+echo:
+
+for %%A in (%_oIds%) do (
+set /a counter+=1
+echo [!counter!] %%A
+set targetedition!counter!=%%A
+)
+
+%line%
+echo:
+echo [0]  Go Back
+echo:
+call :dk_color %_Green% "Enter an option number using your keyboard and press Enter to confirm:"
+set /p inpt=
+if "%inpt%"=="" goto :oe_editedition
+if "%inpt%"=="0" goto :oemenu
+for /l %%i in (1,1,%counter%) do (if "%inpt%"=="%%i" set verified=1)
+set targetedition=!targetedition%inpt%!
+if %verified%==0 goto :oe_editedition
+
+::===============
+
+cls
+if not defined terminal mode 98, 32
+
+echo %targetedition% | findstr /i "Access Excel OneNote Outlook PowerPoint Project Publisher Skype Visio Word" %nul% && (set list=SingleApps) || (set list=Suites)
+goto :oe_excludeappspre
+
+::========================================================================================================================================
+
 ::  Remove Office editions
 
 :oe_removeedition
+
+title  Remove Office editions %masver%
 
 call :ch_getinfo
 
@@ -829,6 +916,7 @@ goto :oe_goback
 
 :oe_changeupdchnl
 
+title  Change Office update channel %masver%
 call :ch_getinfo
 
 cls
@@ -884,10 +972,12 @@ for %%# in (
 for /f "tokens=1-2 delims=_" %%A in ("%%~#") do (
 set supported=
 if %winbuild% LSS 10240 (echo %%B | findstr /i "LTSC DevMain" %nul% || set supported=1) else (set supported=1)
-if %winbuild% GEQ 10240 (if defined ltsc19 echo %%B | findstr /i "LTSC\>" %nul% || set supported=)
-if %winbuild% GEQ 10240 (if defined ltsc21 echo %%B | findstr /i "LTSC2021\>" %nul% || set supported=)
-if %winbuild% GEQ 10240 (if defined ltsc24 echo %%B | findstr /i "LTSC2024\>" %nul% || set supported=)
-if %winbuild% GEQ 10240 (if not defined ltscfound echo %%B | findstr /i "LTSC" %nul% && set supported=)
+if %winbuild% GEQ 10240 (
+if defined ltsc19 echo %%B | find /i "2019 VL" %nul% || set supported=
+if defined ltsc21 echo %%B | find /i "2021 VL" %nul% || set supported=
+if defined ltsc24 echo %%B | find /i "2024 VL" %nul% || set supported=
+if not defined ltscfound echo %%B | find /i "LTSC" %nul% && set supported=
+)
 if defined supported (
 set /a counter+=1
 if !counter! LSS 10 (
@@ -974,7 +1064,8 @@ call :oe_tempcleanup
 
 echo:
 if defined fixes (
-call :dk_color2 %Blue% "Press [1] To Open Troubleshoot Page " %Gray% " Press [0] To Ignore"
+call :dk_color %White% "Follow ALL the ABOVE blue lines.   "
+call :dk_color2 %Blue% "Press [1] to Open Support Webpage " %Gray% " Press [0] to Ignore"
 choice /C:10 /N
 if !errorlevel!==1 (for %%# in (%fixes%) do (start %%#))
 )
@@ -1057,13 +1148,15 @@ if exist "%_cfolder%\OfficeC2RClient.exe" (
 set "_c2rCexe=%_cfolder%\OfficeC2RClient.exe"
 )
 
-echo %_AudienceData% | findstr /i "LTSC\>" %nul% && set ltsc19=LTSC
+set "audidata4=%_AudienceData:~-4%"
+
+if /i "%audidata4%"=="LTSC" set ltsc19=LTSC
 echo %_clversion% %_version% | findstr "16.0.103 16.0.104 16.0.105" %nul% && set ltsc19=LTSC
 
-echo %_AudienceData% | findstr /i "LTSC2021\>" %nul% && set ltsc21=LTSC2021
+if /i "%audidata4%"=="2021" set ltsc21=LTSC2021
 echo %_clversion% %_version% | findstr "16.0.14332" %nul% && set ltsc21=LTSC2021
 
-echo %_AudienceData% | findstr /i "LTSC2024\>" %nul% && set ltsc24=LTSC2024
+if /i "%audidata4%"=="2024" set ltsc24=LTSC2024
 ::  LTSC 2024 build is not fixed yet
 
 if not "%ltsc19%%ltsc21%%ltsc24%"=="" set ltscfound=1
@@ -1223,12 +1316,15 @@ set _NCS=1
 if %winbuild% LSS 10586 set _NCS=0
 if %winbuild% GEQ 10586 reg query "HKCU\Console" /v ForceV2 %nul2% | find /i "0x0" %nul1% && (set _NCS=0)
 
+echo "%PROCESSOR_ARCHITECTURE% %PROCESSOR_ARCHITEW6432%" | find /i "ARM64" %nul1% && (if %winbuild% LSS 21277 set ps32onArm=1)
+
 if %_NCS% EQU 1 (
 for /F %%a in ('echo prompt $E ^| cmd') do set "esc=%%a"
 set     "Red="41;97m""
 set    "Gray="100;97m""
 set   "Green="42;97m""
 set    "Blue="44;97m""
+set   "White="107;91m""
 set    "_Red="40;91m""
 set  "_White="40;37m""
 set  "_Green="40;92m""
@@ -1238,6 +1334,7 @@ set     "Red="Red" "white""
 set    "Gray="Darkgray" "white""
 set   "Green="DarkGreen" "white""
 set    "Blue="Blue" "white""
+set   "White="White" "Red""
 set    "_Red="Black" "Red""
 set  "_White="Black" "Gray""
 set  "_Green="Black" "Green""
@@ -1280,7 +1377,7 @@ echo sc start sppsvc [Error Code: %spperror%]
 )
 
 echo:
-%psc% "$job = Start-Job { (Get-WmiObject -Query 'SELECT * FROM %sps%').Version }; if (-not (Wait-Job $job -Timeout 20)) {write-host 'sppsvc is not working correctly. Help - %mas%troubleshoot'}"
+%psc% "$job = Start-Job { (Get-WmiObject -Query 'SELECT * FROM %sps%').Version }; if (-not (Wait-Job $job -Timeout 30)) {write-host 'sppsvc is not working correctly. Help - %mas%troubleshoot'}"
 exit /b
 
 ::  Common lines used in PowerShell reflection code
@@ -1320,7 +1417,8 @@ echo:
 if %_unattended%==1 timeout /t 2 & exit /b
 
 if defined fixes (
-call :dk_color2 %Blue% "Press [1] To Open Troubleshoot Page " %Gray% " Press [0] To Ignore"
+call :dk_color %White% "Follow ALL the ABOVE blue lines.   "
+call :dk_color2 %Blue% "Press [1] to Open Support Webpage " %Gray% " Press [0] to Ignore"
 choice /C:10 /N
 if !errorlevel!==1 (for %%# in (%fixes%) do (start %%#))
 )
